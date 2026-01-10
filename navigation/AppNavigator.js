@@ -1,31 +1,31 @@
-import React, { useEffect, useState } from 'react';
-import { NavigationContainer } from '@react-navigation/native';
-import { createDrawerNavigator } from '@react-navigation/drawer';
-import * as SecureStore from 'expo-secure-store';
-import { MaterialIcons } from '@expo/vector-icons';
-//import DevicePage from "../components/DevicePage";
-import SchedulerPage from '../components/SchedulerPage';
-import ControlPage from '../components/ControlPage';
+import React, { useEffect, useState } from "react";
+import { NavigationContainer } from "@react-navigation/native";
+import { createDrawerNavigator } from "@react-navigation/drawer";
+import * as SecureStore from "expo-secure-store";
+import { MaterialIcons } from "@expo/vector-icons";
+import DevicePage from "../components/DevicePage";
+import SchedulerPage from "../components/SchedulerPage";
+import ControlPage from "../components/ControlPage";
 //import TimelinePage from "../components/TimelinePage";
-import AccountInfoPage from '../components/AccountInfoPage';
-import LoginPage from '../components/LoginPage';
+import AccountInfoPage from "../components/AccountInfoPage";
+import LoginPage from "../components/LoginPage";
 
 const Drawer = createDrawerNavigator();
 
 const AppNavigator = () => {
   const [isReady, setIsReady] = useState(false);
-  const [initialRoute, setInitialRoute] = useState('Control');
+  const [initialRoute, setInitialRoute] = useState(null);
   const [hasAccount, setHasAccount] = useState(false);
 
   useEffect(() => {
     const checkConfig = async () => {
-      const config = await SecureStore.getItemAsync('config');
+      const config = await SecureStore.getItemAsync("config");
       if (config) {
         setHasAccount(true);
-        setInitialRoute('Control'); // Default to Device Page
+        setInitialRoute("Device Add"); // Default to Device Page
       } else {
         setHasAccount(false);
-        setInitialRoute('Login'); // Show Login if no account
+        setInitialRoute("Login"); // Show Login if no account
       }
       setIsReady(true);
     };
@@ -42,42 +42,53 @@ const AppNavigator = () => {
       <Drawer.Navigator initialRouteName={initialRoute}>
         {hasAccount ? (
           <>
+		  
+		    <Drawer.Screen
+              name="Device Add"
+              component={DevicePage}
+              options={{
+                drawerIcon: ({ color, size }) => (
+                  <MaterialIcons name="login" size={size} color={color} />
+                ),
+              }}
+            />
+           
             <Drawer.Screen
-              name='Scheduler'
+              name="Scheduler"
               component={SchedulerPage}
               options={{
                 drawerIcon: ({ color, size }) => (
-                  <MaterialIcons name='schedule' size={size} color={color} />
+                  <MaterialIcons name="schedule" size={size} color={color} />
                 ),
               }}
             />
             <Drawer.Screen
-              name='Control'
+              name="Control"
               component={ControlPage}
               options={{
                 drawerIcon: ({ color, size }) => (
-                  <MaterialIcons name='settings' size={size} color={color} />
+                  <MaterialIcons name="settings" size={size} color={color} />
                 ),
               }}
             />
-
+            
             <Drawer.Screen
-              name='Account Info'
+              name="Account Info"
               component={AccountInfoPage}
               options={{
                 drawerIcon: ({ color, size }) => (
-                  <MaterialIcons name='account-circle' size={size} color={color} />
+                  <MaterialIcons name="account-circle" size={size} color={color} />
                 ),
               }}
             />
           </>
         ) : (
           <Drawer.Screen
-            name='Login'
+            name="Login"
             component={LoginPage}
             options={{
               drawerIcon: ({ color, size }) => (
-                <MaterialIcons name='login' size={size} color={color} />
+                <MaterialIcons name="login" size={size} color={color} />
               ),
             }}
           />

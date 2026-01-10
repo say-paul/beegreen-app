@@ -40,10 +40,10 @@ const SchedulerPage = ({ navigation }) => {
 
   // MQTT Topics
   const topics = {
-    setSchedule: "beegreen/set_schedule",
-    requestSchedules: "beegreen/get_schedules",
-    getSchedulesResponse: "beegreen/get_schedules_response",
-    heartbeat: "beegreen/heartbeat",
+    setSchedule: "${currentDevice}/set_schedule",
+    requestSchedules: "${currentDevice}/get_schedules",
+    getSchedulesResponse: "${currentDevice}/get_schedules_response",
+    heartbeat: "${currentDevice}/heartbeat",
     deviceSetSchedulePattern: "+/set_schedule",
     deviceRequestSchedulesPattern: "+/get_schedules",
     deviceGetSchedulesResponsePattern: "+/get_schedules_response",

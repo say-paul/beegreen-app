@@ -36,8 +36,7 @@ const SchedulerPage = ({ navigation }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [devices, setDevices] = useState([]);
   const [nextRunTimes, setNextRunTimes] = useState({});
-  const [nextRunModalVisible, setNextRunModalVisible] = useState(false); // New modal state
-  const [refreshingNextRun, setRefreshingNextRun] = useState(false);
+  const [refreshingNextRun, setRefreshingNextRun] = useState(true); // New state for refresh animation
 
   // MQTT Topics
   const topics = {
@@ -50,7 +49,7 @@ const SchedulerPage = ({ navigation }) => {
     deviceGetSchedulesResponsePattern: "+/get_schedules_response",
     deviceHeartbeatPattern: "+/heartbeat",
     deviceNextSchedulePattern: "+/next_schedule_due",
-    deviceRequestNextSchedule: "+/get_next_schedule_due"
+    deviceRequestNextSchedule: "+/get_next_schedule_due" // New topic to request next schedule
   };
 
   // Refs
@@ -75,7 +74,6 @@ const SchedulerPage = ({ navigation }) => {
     return parts.length > 0 ? parts[0] : null;
   };
 
-  // Format next run time for display
   const formatNextRunTime = (timestamp) => {
     if (!timestamp || timestamp === "0" || timestamp === "N/A") {
       return "N/A";
@@ -125,72 +123,6 @@ const SchedulerPage = ({ navigation }) => {
     }
   };
 
-  // Format next run time for detailed view in modal
-  const formatNextRunTimeDetailed = (timestamp) => {
-    if (!timestamp || timestamp === "0" || timestamp === "N/A") {
-      return {
-        date: "Not scheduled",
-        time: "",
-        relative: "No upcoming schedule",
-        timestamp: null
-      };
-    }
-    
-    try {
-      const date = new Date(parseInt(timestamp) * 1000);
-      if (isNaN(date.getTime())) {
-        return {
-          date: "Invalid time",
-          time: "",
-          relative: "Invalid timestamp",
-          timestamp: null
-        };
-      }
-      
-      const now = new Date();
-      const diffMs = date.getTime() - now.getTime();
-      const diffMins = Math.round(diffMs / 60000);
-      const diffHours = Math.floor(diffMins / 60);
-      const diffDays = Math.floor(diffHours / 24);
-      
-      let relativeText = "";
-      
-      if (diffMs < 0) {
-        relativeText = "This schedule has passed";
-      } else if (diffMins < 1) {
-        relativeText = "Starting now";
-      } else if (diffMins < 60) {
-        relativeText = `Starting in ${diffMins} minute${diffMins !== 1 ? 's' : ''}`;
-      } else if (diffHours < 24) {
-        const remainingMins = diffMins % 60;
-        relativeText = `Starting in ${diffHours} hour${diffHours !== 1 ? 's' : ''}`;
-        if (remainingMins > 0) {
-          relativeText += ` and ${remainingMins} minute${remainingMins !== 1 ? 's' : ''}`;
-        }
-      } else {
-        relativeText = `Starting in ${diffDays} day${diffDays !== 1 ? 's' : ''}`;
-        const remainingHours = diffHours % 24;
-        if (remainingHours > 0) {
-          relativeText += ` and ${remainingHours} hour${remainingHours !== 1 ? 's' : ''}`;
-        }
-      }
-      
-      return {
-        date: date.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }),
-        time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        relative: relativeText,
-        timestamp: timestamp
-      };
-    } catch (error) {
-      console.error("Error formatting detailed next run time:", error);
-      return {
-        date: "Error",
-        time: "",
-        relative: "Unable to parse time",
-        timestamp: null
-      };
-    }
-  };
 
   // Add a new device to the list
   const addNewDevice = (deviceName) => {
@@ -368,12 +300,6 @@ const SchedulerPage = ({ navigation }) => {
   const getCurrentDeviceNextRunTime = () => {
     if (!currentDevice) return "N/A";
     return nextRunTimes[currentDevice] || "N/A";
-  };
-
-  // Get detailed next run info for modal
-  const getNextRunDetails = () => {
-    const timestamp = getCurrentDeviceNextRunTime();
-    return formatNextRunTimeDetailed(timestamp);
   };
 
   // Initialize MQTT connection
@@ -714,33 +640,10 @@ const SchedulerPage = ({ navigation }) => {
     return selectedDays.join(", ");
   };
 
-  // Handle next run button press
-  const handleNextRunPress = () => {
-    if (!currentDevice || !isOnline) {
-      Alert.alert("Offline", "Cannot check next run time while offline");
-      return;
-    }
-    
-    // If we don't have a valid next run time, request it first
-    const currentTime = getCurrentDeviceNextRunTime();
-    if (currentTime === "N/A" || currentTime === "0") {
-      setRefreshingNextRun(true);
-      requestNextRunTime();
-      
-      // Open modal after a short delay
-      setTimeout(() => {
-        setNextRunModalVisible(true);
-      }, 500);
-    } else {
-      setNextRunModalVisible(true);
-    }
-  };
-
   // Get schedules for current device to display
   const displaySchedules = getCurrentDeviceSchedules().filter(s => s.dur > 0 || s.hour > 0 || s.min > 0);
   const displaySchedulesCount = displaySchedules.length;
   const nextRunTime = getCurrentDeviceNextRunTime();
-  const nextRunDetails = getNextRunDetails();
 
   return (
     <SafeAreaView style={styles.container}>
@@ -807,34 +710,37 @@ const SchedulerPage = ({ navigation }) => {
         </View>
       )}
 
-      {/* Next Run Time Button */}
+      {/* Next Run Time Display - Now Clickable */}
       {currentDevice && isOnline && (
         <TouchableOpacity 
           style={[
-            styles.nextRunButton,
-            refreshingNextRun && styles.nextRunButtonRefreshing
+            styles.nextRunContainer,
+            refreshingNextRun && styles.nextRunContainerRefreshing
           ]}
-          onPress={handleNextRunPress}
-          activeOpacity={0.8}
+          onPress={requestNextRunTime}
+          activeOpacity={0.7}
+          disabled={refreshingNextRun}
         >
-          <View style={styles.nextRunButtonContent}>
-            <MaterialIcons 
-              name={refreshingNextRun ? "refresh" : "schedule"} 
-              size={20} 
-              color="#5E72E4" 
-              style={refreshingNextRun ? styles.refreshingIcon : null}
-            />
-            <View style={styles.nextRunButtonTextContainer}>
-              <Text style={styles.nextRunButtonLabel}>Next run:</Text>
-              <Text style={styles.nextRunButtonTime}>
-                {refreshingNextRun ? "Refreshing..." : formatNextRunTime(nextRunTime)}
-              </Text>
+          <View style={styles.nextRunIcon}>
+            {refreshingNextRun ? (
+              <MaterialIcons name="refresh" size={20} color="#5E72E4" style={styles.refreshingIcon} />
+            ) : (
+              <MaterialIcons name="schedule" size={18} color="#5E72E4" />
+            )}
+          </View>
+          <View style={styles.nextRunTextContainer}>
+            <View style={styles.nextRunHeader}>
+              <Text style={styles.nextRunLabel}>Next run:</Text>
+              <MaterialIcons 
+                name="refresh" 
+                size={14} 
+                color="#718096" 
+                style={styles.refreshIndicator} 
+              />
             </View>
-            <MaterialIcons 
-              name="chevron-right" 
-              size={20} 
-              color="#718096" 
-            />
+            <Text style={styles.nextRunTime}>
+              {refreshingNextRun ? "Refreshing..." : (nextRunTime)}
+            </Text>
           </View>
         </TouchableOpacity>
       )}
@@ -941,112 +847,6 @@ const SchedulerPage = ({ navigation }) => {
           </View>
         )}
       </ScrollView>
-
-      {/* Next Run Time Modal */}
-      <Modal
-        visible={nextRunModalVisible}
-        animationType="slide"
-        transparent={true}
-        onRequestClose={() => setNextRunModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.nextRunModalContainer}>
-            <View style={styles.modalHeader}>
-              <View>
-                <Text style={styles.modalTitle}>Next Run Time</Text>
-                {currentDevice && (
-                  <Text style={styles.modalSubtitle}>Device: {currentDevice}</Text>
-                )}
-              </View>
-              <TouchableOpacity 
-                onPress={() => setNextRunModalVisible(false)}
-                style={styles.closeButton}
-              >
-                <MaterialIcons name="close" size={24} color="#4A5568" />
-              </TouchableOpacity>
-            </View>
-            
-            <View style={styles.nextRunModalContent}>
-              <View style={styles.nextRunIconLarge}>
-                <MaterialIcons name="schedule" size={48} color="#5E72E4" />
-              </View>
-              
-              <Text style={styles.nextRunModalTitle}>
-                {nextRunDetails.relative}
-              </Text>
-              
-              {nextRunDetails.timestamp && (
-                <>
-                  <View style={styles.nextRunDetailRow}>
-                    <MaterialIcons name="calendar-today" size={20} color="#718096" />
-                    <Text style={styles.nextRunDetailText}>
-                      {nextRunDetails.date}
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.nextRunDetailRow}>
-                    <MaterialIcons name="access-time" size={20} color="#718096" />
-                    <Text style={styles.nextRunDetailText}>
-                      {nextRunDetails.time}
-                    </Text>
-                  </View>
-                  
-                  {nextRunDetails.timestamp && (
-                    <View style={styles.timestampContainer}>
-                      <Text style={styles.timestampLabel}>Unix Timestamp:</Text>
-                      <Text style={styles.timestampValue}>{nextRunDetails.timestamp}</Text>
-                    </View>
-                  )}
-                </>
-              )}
-              
-              {!nextRunDetails.timestamp && (
-                <View style={styles.noScheduleContainer}>
-                  <MaterialIcons name="info-outline" size={40} color="#CBD5E0" />
-                  <Text style={styles.noScheduleText}>
-                    No upcoming schedule found
-                  </Text>
-                  <Text style={styles.noScheduleSubtext}>
-                    Add a schedule to see when the next run will occur
-                  </Text>
-                </View>
-              )}
-            </View>
-            
-            <View style={styles.nextRunModalFooter}>
-              <TouchableOpacity 
-                style={styles.refreshButtonModal}
-                onPress={() => {
-                  requestNextRunTime();
-                  // Keep modal open to show refreshing state
-                }}
-                disabled={refreshingNextRun}
-              >
-                <MaterialIcons 
-                  name="refresh" 
-                  size={20} 
-                  color={refreshingNextRun ? "#CBD5E0" : "#5E72E4"} 
-                  style={refreshingNextRun ? styles.refreshingIcon : null}
-                />
-                <Text style={[
-                  styles.refreshButtonText,
-                  refreshingNextRun && styles.refreshButtonTextDisabled
-                ]}>
-                  {refreshingNextRun ? "Refreshing..." : "Refresh"}
-                </Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity 
-                style={styles.closeModalButton}
-                onPress={() => setNextRunModalVisible(false)}
-              >
-                <Text style={styles.closeModalButtonText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
       {/* Schedule Modal */}
       <Modal
         visible={modalVisible}
@@ -1267,41 +1067,40 @@ const styles = StyleSheet.create({
   deviceChipTextActive: {
     color: 'white',
   },
-  nextRunButton: {
-    backgroundColor: 'white',
-    marginHorizontal: 20,
-    marginTop: 16,
-    marginBottom: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E2E8F0',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-  },
-  nextRunButtonRefreshing: {
-    backgroundColor: '#F8FAFC',
-  },
-  nextRunButtonContent: {
+  nextRunContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 16,
+    backgroundColor: '#EBF4FF',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#C3DDFD',
   },
-  nextRunButtonTextContainer: {
+  nextRunContainerRefreshing: {
+    backgroundColor: '#E6F7FF',
+  },
+  nextRunIcon: {
+    marginRight: 12,
+  },
+  nextRunTextContainer: {
     flex: 1,
-    marginLeft: 12,
   },
-  nextRunButtonLabel: {
-    fontSize: 12,
-    color: '#718096',
-    fontWeight: '600',
+  nextRunHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     marginBottom: 2,
   },
-  nextRunButtonTime: {
-    fontSize: 16,
+  nextRunLabel: {
+    fontSize: 12,
+    color: '#4A5568',
+    fontWeight: '600',
+    marginRight: 6,
+  },
+  refreshIndicator: {
+    opacity: 0.7,
+  },
+  nextRunTime: {
+    fontSize: 14,
     color: '#2D3748',
     fontWeight: '700',
   },
@@ -1438,13 +1237,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
   },
-  nextRunModalContainer: {
+  modalContainer: {
     backgroundColor: 'white',
     borderRadius: 16,
     padding: 24,
     width: '100%',
     maxWidth: 400,
-    maxHeight: '80%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -1465,22 +1263,8 @@ const styles = StyleSheet.create({
   closeButton: {
     padding: 4,
   },
-  nextRunModalContent: {
-    alignItems: 'center',
-    paddingVertical: 20,
-  },
-  nextRunIconLarge: {
-    backgroundColor: '#EBF4FF',
-    padding: 20,
-    borderRadius: 50,
+  inputGroup: {
     marginBottom: 20,
-  },
-  nextRunModalTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#2D3748',
-    textAlign: 'center',
-    marginBottom: 24,
   },
   nextRunDetailRow: {
     flexDirection: 'row',

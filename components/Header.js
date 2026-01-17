@@ -1,5 +1,5 @@
-import React from 'react';
-import { Text, StyleSheet } from 'react-native';
+import React from "react";
+import { Text, StyleSheet } from "react-native";
 
 const Header = () => {
   return <Text style={styles.header}>BeeGreen</Text>;
@@ -7,10 +7,10 @@ const Header = () => {
 
 const styles = StyleSheet.create({
   header: {
-    color: '#fff',
     fontSize: 40,
-    fontWeight: 'bold',
+    color: "#fff",
     marginBottom: 20,
+    fontWeight: "bold",
   },
 });
 

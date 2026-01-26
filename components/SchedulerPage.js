@@ -16,7 +16,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import Paho from "paho-mqtt";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from 'expo-notifications';
-import { parseArrayPayload } from './tools';
+import { parseArrayPayload, parseStringPayload } from './tools';
 
 const SchedulerPage = ({ navigation }) => {
   // State management
@@ -57,6 +57,7 @@ const SchedulerPage = ({ navigation }) => {
   const devicesRef = useRef(new Set());
   const schedulesRef = useRef({});
   const nextRunTimesRef = useRef({});
+  const refreshingNextRunRef = useRef(false);
 
   // Days of week values for bitmask
   const daysValues = {
@@ -75,52 +76,44 @@ const SchedulerPage = ({ navigation }) => {
     return parts.length > 0 ? parts[0] : null;
   };
 
-  const formatNextRunTime = (timestamp) => {
-    if (!timestamp || timestamp === "0" || timestamp === "N/A") {
+  const formatNextRunTime = (dateTimeStr) => {
+    if (!dateTimeStr || dateTimeStr === "N/A") {
       return "N/A";
     }
     
+    // Handle empty payload case
+    if (dateTimeStr === "" || dateTimeStr === "0") {
+      return "No next run scheduled";
+    }
+    
     try {
-      const date = new Date(parseInt(timestamp) * 1000);
+      // Parse datetime string format "YYYY-MM-DD HH:mm:ss"
+      const date = new Date(dateTimeStr.replace(' ', 'T'));
       if (isNaN(date.getTime())) {
-        return "N/A";
+        return "No next run scheduled";
       }
       
       const now = new Date();
-      const diffMs = date.getTime() - now.getTime();
-      const diffMins = Math.round(diffMs / 60000);
-      
-      // If within 24 hours, show relative time
-      if (diffMs > 0 && diffMs < 24 * 60 * 60 * 1000) {
-        if (diffMins < 1) {
-          return "Now";
-        } else if (diffMins < 60) {
-          return `in ${diffMins} min${diffMins !== 1 ? 's' : ''}`;
-        } else {
-          const hours = Math.floor(diffMins / 60);
-          const minutes = diffMins % 60;
-          if (minutes === 0) {
-            return `in ${hours} hour${hours !== 1 ? 's' : ''}`;
-          }
-          return `in ${hours}h ${minutes}m`;
-        }
-      }
-      
-      // Otherwise show date/time
       const today = now.toDateString();
       const tomorrow = new Date(now);
       tomorrow.setDate(tomorrow.getDate() + 1);
       
+      const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      
+      // Today → "Today, 08:00 AM"
       if (date.toDateString() === today) {
-        return `Today, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-      } else if (date.toDateString() === tomorrow.toDateString()) {
-        return `Tomorrow, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-      } else {
-        return `${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        return `Today, ${timeStr}`;
+      }
+      // Tomorrow → "Tomorrow, 08:00 AM"
+      else if (date.toDateString() === tomorrow.toDateString()) {
+        return `Tomorrow, ${timeStr}`;
+      }
+      // After tomorrow → "Wed, Jan 28, 08:00 AM"
+      else {
+        return `${date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${timeStr}`;
       }
     } catch (error) {
-      console.error("Error formatting next run time:", error);
-      return "N/A";
+      return "No next run scheduled";
     }
   };
 
@@ -167,6 +160,7 @@ const SchedulerPage = ({ navigation }) => {
     }
     
     setRefreshingNextRun(true);
+    refreshingNextRunRef.current = true;
     
     try {
       const message = new Paho.Message("");
@@ -174,17 +168,15 @@ const SchedulerPage = ({ navigation }) => {
       message.qos = 1;
       client.send(message);
       
-      console.log(`Requested next run time from ${currentDevice}`);
-      
-      // Timeout if no response
+      // Timeout - silently stop refreshing (device may have auto-published already)
       setTimeout(() => {
-        if (refreshingNextRun) {
+        if (refreshingNextRunRef.current) {
+          refreshingNextRunRef.current = false;
           setRefreshingNextRun(false);
-          Alert.alert("No Response", "Device did not respond with next run time");
         }
       }, 3000);
     } catch (error) {
-      console.error("Error requesting next run time:", error);
+      refreshingNextRunRef.current = false;
       setRefreshingNextRun(false);
     }
   };
@@ -321,12 +313,13 @@ const SchedulerPage = ({ navigation }) => {
           }
           // Handle next schedule due time
           else if (topic.endsWith('/next_schedule_due')) {
-            if (deviceName && payload) {
-              updateNextRunTime(deviceName, payload);
+            if (deviceName) {
+              // Parse the payload using parseStringPayload to extract datetime string
+              const nextRunPayload = parseStringPayload(payload);
+              updateNextRunTime(deviceName, nextRunPayload);
               // Stop refresh animation when we get a response
-              if (refreshingNextRun && deviceName === currentDevice) {
-                setRefreshingNextRun(false);
-              }
+              refreshingNextRunRef.current = false;
+              setRefreshingNextRun(false);
             }
           }
           // Handle schedules response
@@ -569,10 +562,9 @@ const SchedulerPage = ({ navigation }) => {
 
     setModalVisible(false);
     
-    // Refresh schedules and next run time
+    // Refresh schedules (next run time is auto-published by device)
     setTimeout(() => {
       requestSchedules();
-      requestNextRunTime();
     }, 1000);
   };
 
@@ -610,10 +602,9 @@ const SchedulerPage = ({ navigation }) => {
       saveSchedulesForDevice(currentDevice, updatedSchedules);
     }
     
-    // Refresh schedules and next run time
+    // Refresh schedules (next run time is auto-published by device)
     setTimeout(() => {
       requestSchedules();
-      requestNextRunTime();
     }, 1000);
   };
 
@@ -758,7 +749,7 @@ const SchedulerPage = ({ navigation }) => {
               />
             </View>
             <Text style={styles.nextRunTime}>
-              {refreshingNextRun ? "Refreshing..." : (nextRunTime)}
+              {refreshingNextRun ? "Refreshing..." : formatNextRunTime(nextRunTime)}
             </Text>
           </View>
         </TouchableOpacity>

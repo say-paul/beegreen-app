@@ -16,6 +16,7 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 import Paho from "paho-mqtt";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from 'expo-notifications';
+import { parseArrayPayload } from './tools';
 
 const SchedulerPage = ({ navigation }) => {
   // State management
@@ -188,59 +189,48 @@ const SchedulerPage = ({ navigation }) => {
     }
   };
 
-  // Parse schedules from payload string
-  const parseSchedulesFromPayload = (payloadStr) => {
+  // Parse schedules from payload array
+  const parseSchedulesFromPayload = (payloadArray) => {
     const schedules = [];
-    const cleanPayload = payloadStr.trim();
     
-    if (!cleanPayload) {
+    if (!Array.isArray(payloadArray) || payloadArray.length === 0) {
       return schedules;
     }
     
-    // Try to parse as JSON array
-    if (cleanPayload.startsWith('[') && cleanPayload.endsWith(']')) {
-      try {
-        const jsonArray = JSON.parse(cleanPayload);
+    payloadArray.forEach((item, index) => {
+      if (typeof item === 'string') {
+        const parts = item.split(':').map(part => part.trim());
         
-        jsonArray.forEach((item, index) => {
-          if (typeof item === 'string') {
-            const parts = item.split(':').map(part => part.trim());
-            
-            if (parts.length === 5) {
-              schedules.push({
-                index: parseInt(parts[0]) || index,
-                hour: parseInt(parts[1]) || 0,
-                min: parseInt(parts[2]) || 0,
-                dur: parseInt(parts[3]) || 0,
-                dow: parseInt(parts[4]) || 0,
-                en: true
-              });
-            } else if (parts.length === 6) {
-              schedules.push({
-                index: parseInt(parts[0]) || index,
-                hour: parseInt(parts[1]) || 0,
-                min: parseInt(parts[2]) || 0,
-                dur: parseInt(parts[3]) || 0,
-                dow: parseInt(parts[4]) || 0,
-                en: parts[5] === '1' || parts[5].toLowerCase() === 'true'
-              });
-            }
-          } else if (item && typeof item === 'object') {
-            schedules.push({
-              index: item.index !== undefined ? item.index : index,
-              hour: item.hour || item.HOUR || item.h || 0,
-              min: item.min || item.MIN || item.m || 0,
-              dur: item.dur || item.DUR || item.d || item.duration || 0,
-              dow: item.dow || item.DOW || item.w || item.daysofweek || 0,
-              en: true
-            });
-          }
+        if (parts.length === 5) {
+          schedules.push({
+            index: parseInt(parts[0]) || index,
+            hour: parseInt(parts[1]) || 0,
+            min: parseInt(parts[2]) || 0,
+            dur: parseInt(parts[3]) || 0,
+            dow: parseInt(parts[4]) || 0,
+            en: true
+          });
+        } else if (parts.length === 6) {
+          schedules.push({
+            index: parseInt(parts[0]) || index,
+            hour: parseInt(parts[1]) || 0,
+            min: parseInt(parts[2]) || 0,
+            dur: parseInt(parts[3]) || 0,
+            dow: parseInt(parts[4]) || 0,
+            en: parts[5] === '1' || parts[5].toLowerCase() === 'true'
+          });
+        }
+      } else if (item && typeof item === 'object') {
+        schedules.push({
+          index: item.index !== undefined ? item.index : index,
+          hour: item.hour || item.HOUR || item.h || 0,
+          min: item.min || item.MIN || item.m || 0,
+          dur: item.dur || item.DUR || item.d || item.duration || 0,
+          dow: item.dow || item.DOW || item.w || item.daysofweek || 0,
+          en: true
         });
-        return schedules;
-      } catch (e) {
-        console.log("Not valid JSON array:", e.message);
       }
-    }
+    });
     
     return schedules;
   };
@@ -343,32 +333,34 @@ const SchedulerPage = ({ navigation }) => {
           else if (topic.endsWith('/get_schedules_response')) {
             try {
               const payloadStr = message.payloadString.trim();
-              const parsedSchedules = parseSchedulesFromPayload(payloadStr);
+              const payloadArray = parseArrayPayload(payloadStr);
+              const parsedSchedules = parseSchedulesFromPayload(payloadArray);
               
-              if (parsedSchedules.length > 0) {
-                const allSchedules = Array(10).fill(null).map((_, index) => {
-                  const foundSchedule = parsedSchedules.find(s => s.index === index);
-                  return foundSchedule || {
-                    index,
-                    hour: 0,
-                    min: 0,
-                    dur: 0,
-                    dow: 0,
-                    en: 0
-                  };
-                });
-                
-                if (deviceName) {
-                  saveSchedulesForDevice(deviceName, allSchedules);
-                } else {
-                  saveSchedulesForDevice("default", allSchedules);
-                  if (devicesRef.current.size === 0) {
-                    addNewDevice("default");
-                  }
+              // Build all 10 schedule slots (empty or with data)
+              const allSchedules = Array(10).fill(null).map((_, index) => {
+                const foundSchedule = parsedSchedules.find(s => s.index === index);
+                return foundSchedule || {
+                  index,
+                  hour: 0,
+                  min: 0,
+                  dur: 0,
+                  dow: 0,
+                  en: 0
+                };
+              });
+              
+              if (deviceName) {
+                // Ensure device is in the list and set as current
+                addNewDevice(deviceName);
+                saveSchedulesForDevice(deviceName, allSchedules);
+              } else {
+                saveSchedulesForDevice("default", allSchedules);
+                if (devicesRef.current.size === 0) {
+                  addNewDevice("default");
                 }
               }
             } catch (error) {
-              console.error("❌ Error parsing schedules:", error);
+              // Silent fail - schedules will show from local storage
             }
             
             setIsLoading(false);
@@ -377,25 +369,25 @@ const SchedulerPage = ({ navigation }) => {
           else if (topic === topics.getSchedulesResponse) {
             try {
               const payloadStr = message.payloadString.trim();
-              const parsedSchedules = parseSchedulesFromPayload(payloadStr);
+              const payloadArray = parseArrayPayload(payloadStr);
+              const parsedSchedules = parseSchedulesFromPayload(payloadArray);
               
-              if (parsedSchedules.length > 0) {
-                const allSchedules = Array(10).fill(null).map((_, index) => {
-                  const foundSchedule = parsedSchedules.find(s => s.index === index);
-                  return foundSchedule || {
-                    index,
-                    hour: 0,
-                    min: 0,
-                    dur: 0,
-                    dow: 0,
-                    en: 0
-                  };
-                });
-                
-                saveSchedulesForDevice("default", allSchedules);
-                if (devicesRef.current.size === 0) {
-                  addNewDevice("default");
-                }
+              // Build all 10 schedule slots (empty or with data)
+              const allSchedules = Array(10).fill(null).map((_, index) => {
+                const foundSchedule = parsedSchedules.find(s => s.index === index);
+                return foundSchedule || {
+                  index,
+                  hour: 0,
+                  min: 0,
+                  dur: 0,
+                  dow: 0,
+                  en: 0
+                };
+              });
+              
+              saveSchedulesForDevice("default", allSchedules);
+              if (devicesRef.current.size === 0) {
+                addNewDevice("default");
               }
             } catch (error) {
               console.error("❌ Error parsing legacy schedules:", error);
@@ -421,14 +413,16 @@ const SchedulerPage = ({ navigation }) => {
             mqttClient.subscribe(topics.getSchedulesResponse);
             mqttClient.subscribe(topics.heartbeat);
             
-            // Load saved devices
-            loadSavedDevices();
+            // Load saved devices and then request schedules
+            loadSavedDevices(mqttClient);
           },
           onFailure: (err) => {
             console.error("Connection failed:", err);
-            Alert.alert("Connection Error", "Failed to connect to MQTT server");
+            Alert.alert("Connection Error", "Failed to connect to MQTT server. Showing locally saved schedules.");
             setIsOnline(false);
             setIsLoading(false);
+            // Load locally stored schedules even when offline
+            loadSavedDevices(null);
           },
           useSSL: true,
           userName: mqttUser,
@@ -439,8 +433,10 @@ const SchedulerPage = ({ navigation }) => {
 
         setClient(mqttClient);
       } else {
-        Alert.alert("Configuration Missing", "Please configure MQTT settings first");
+        Alert.alert("Configuration Missing", "Please configure MQTT settings first. Showing locally saved schedules.");
         setIsLoading(false);
+        // Load locally stored schedules even without MQTT config
+        loadSavedDevices(null);
       }
     };
 
@@ -454,7 +450,7 @@ const SchedulerPage = ({ navigation }) => {
   }, []);
 
   // Load saved devices from SecureStore
-  const loadSavedDevices = async () => {
+  const loadSavedDevices = async (mqttClient) => {
     try {
       const savedDevices = await SecureStore.getItemAsync("scheduler_devices");
       if (savedDevices) {
@@ -476,8 +472,31 @@ const SchedulerPage = ({ navigation }) => {
           setNextRunTimes(times);
           
           if (deviceArray.length > 0) {
-            setCurrentDevice(deviceArray[0]);
-            loadSchedulesForDevice(deviceArray[0]);
+            const firstDevice = deviceArray[0];
+            setCurrentDevice(firstDevice);
+            // Load locally stored schedules first (shown immediately)
+            loadSchedulesForDevice(firstDevice);
+            
+            // Request fresh schedules from device via MQTT (will update if received)
+            if (mqttClient && mqttClient.isConnected()) {
+              setIsLoading(true);
+              setTimeout(() => {
+                try {
+                  const message = new Paho.Message("");
+                  message.destinationName = `${firstDevice}/get_schedules`;
+                  message.qos = 1;
+                  mqttClient.send(message);
+                  
+                  // Timeout: clear loading if no response, keep showing local schedules
+                  setTimeout(() => {
+                    setIsLoading(false);
+                  }, 5000);
+                } catch (error) {
+                  console.error("Error requesting schedules on load:", error);
+                  setIsLoading(false);
+                }
+              }, 500);
+            }
           }
         }
       }

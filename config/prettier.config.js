@@ -11,4 +11,4 @@ module.exports = {
   useTabs: false,
   jsxSingleQuote: true,
   quoteProps: 'as-needed',
-}; 
+};

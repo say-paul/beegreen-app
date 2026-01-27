@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from "react";
-import { View, StyleSheet, Text, SafeAreaView } from "react-native";
-import Timeline from "react-native-timeline-flatlist";
-import Paho from "paho-mqtt";
-import * as SecureStore from "expo-secure-store";
+import React, { useState, useEffect } from 'react';
+import { View, StyleSheet, Text, SafeAreaView } from 'react-native';
+import Timeline from 'react-native-timeline-flatlist';
+import Paho from 'paho-mqtt';
+import * as SecureStore from 'expo-secure-store';
 
 const TimelinePage = () => {
   const [timelineData, setTimelineData] = useState([]);
@@ -10,34 +10,34 @@ const TimelinePage = () => {
   const [lastHeartbeatTimestamp, setLastHeartbeatTimestamp] = useState(Date.now());
   const [client, setClient] = useState(null);
   const [savedData, setSavedData] = useState({
-        pumpStatus: "OFF",
-		pumpTime: "",
-		mqttServer: "",
-		mqttPort: "",
-		mqttUser: "",
-		mqttPassword: "",
-		scheduler: "",
+    pumpStatus: 'OFF',
+    pumpTime: '',
+    mqttServer: '',
+    mqttPort: '',
+    mqttUser: '',
+    mqttPassword: '',
+    scheduler: '',
   });
 
   // MQTT Configuration
   const mqttPort = 8884; // WebSocket port (default for HiveMQ)
-  const pumpStatusTopic = "beegreen/pump_status";
-  const heartbeatTopic = "beegreen/heartbeat";
+  const pumpStatusTopic = 'beegreen/pump_status';
+  const heartbeatTopic = 'beegreen/heartbeat';
 
   // Fetch MQTT details from SecureStore
   useEffect(() => {
     const fetchSavedData = async () => {
-      const config = await SecureStore.getItemAsync("config");
+      const config = await SecureStore.getItemAsync('config');
       if (config) {
         const parsedConfig = JSON.parse(config);
         setSavedData({
-          mqttServer: parsedConfig.mqttServer || "",
-          mqttPort: parsedConfig.mqttPort || "",
-          mqttUser: parsedConfig.mqttUser || "",
-          mqttPassword: parsedConfig.mqttPassword || "",
-		  pumpTime: parsedConfig.pumpTime || "",
-		  scheduler: parsedConfig.scheduler || "",
-		  pumpStatus: parsedConfig.pumpStatus || "",
+          mqttServer: parsedConfig.mqttServer || '',
+          mqttPort: parsedConfig.mqttPort || '',
+          mqttUser: parsedConfig.mqttUser || '',
+          mqttPassword: parsedConfig.mqttPassword || '',
+          pumpTime: parsedConfig.pumpTime || '',
+          scheduler: parsedConfig.scheduler || '',
+          pumpStatus: parsedConfig.pumpStatus || '',
         });
       }
     };
@@ -51,23 +51,23 @@ const TimelinePage = () => {
       const mqttClient = new Paho.Client(
         savedData.mqttServer,
         mqttPort,
-        "clientId-" + Math.random().toString(16).substr(2, 8)
+        'clientId-' + Math.random().toString(16).substr(2, 8)
       );
 
       // Set callback handlers
-     // mqttClient.onConnectionLost = onConnectionLost;
+      // mqttClient.onConnectionLost = onConnectionLost;
       mqttClient.onMessageArrived = onMessageArrived;
 
       // Connect to the MQTT broker
       mqttClient.connect({
         onSuccess: () => {
-          console.log("Connected to MQTT broker in timeline page");
+          console.log('Connected to MQTT broker in timeline page');
           setIsDeviceOnline(true);
-         // mqttClient.subscribe(pumpStatusTopic);
-         // mqttClient.subscribe(heartbeatTopic);
+          // mqttClient.subscribe(pumpStatusTopic);
+          // mqttClient.subscribe(heartbeatTopic);
         },
-        onFailure: (err) => {
-          console.error("Failed to connect to MQTT broker", err);
+        onFailure: err => {
+          console.error('Failed to connect to MQTT broker', err);
           setIsDeviceOnline(false);
         },
         useSSL: true,
@@ -86,25 +86,25 @@ const TimelinePage = () => {
     }
   }, [savedData]);
 
-  const onConnectionLost = (responseObject) => {
+  const onConnectionLost = responseObject => {
     if (responseObject.errorCode !== 0) {
-      console.error("Connection lost:", responseObject.errorMessage);
+      console.error('Connection lost:', responseObject.errorMessage);
       setIsDeviceOnline(false);
     }
   };
 
-  const onMessageArrived = (message) => {
+  const onMessageArrived = message => {
     const data = JSON.parse(message.payloadString);
 
     if (message.destinationName === pumpStatusTopic) {
       // Add pump status to timeline
-      setTimelineData((prevData) => [
+      setTimelineData(prevData => [
         ...prevData,
         {
           time: new Date(data.timestamp).toLocaleTimeString(),
           title: `Pump ${data.payload}`,
           description: `Timestamp: ${new Date(data.timestamp).toLocaleString()}`,
-          icon: data.payload === "on" ? "power" : "power-off",
+          icon: data.payload === 'on' ? 'power' : 'power-off',
         },
       ]);
     } else if (message.destinationName === heartbeatTopic) {
@@ -114,13 +114,13 @@ const TimelinePage = () => {
       // Mark device as online
       if (!isDeviceOnline) {
         setIsDeviceOnline(true);
-        setTimelineData((prevData) => [
+        setTimelineData(prevData => [
           ...prevData,
           {
             time: new Date().toLocaleTimeString(),
-            title: "Device Online",
+            title: 'Device Online',
             description: `Timestamp: ${new Date().toLocaleString()}`,
-            icon: "wifi",
+            icon: 'wifi',
           },
         ]);
       }
@@ -132,58 +132,51 @@ const TimelinePage = () => {
     const interval = setInterval(() => {
       if (Date.now() - lastHeartbeatTimestamp > 60000 && isDeviceOnline) {
         setIsDeviceOnline(false);
-        setTimelineData((prevData) => [
+        setTimelineData(prevData => [
           ...prevData,
           {
             time: new Date().toLocaleTimeString(),
-            title: "Device Offline",
+            title: 'Device Offline',
             description: `Timestamp: ${new Date().toLocaleString()}`,
-            icon: "wifi-off",
+            icon: 'wifi-off',
           },
         ]);
       }
-	  
-	  
-		const onMessageArrived = (message) => {
-			const data = JSON.parse(message.payloadString);
 
-			if (message.destinationName === pumpStatusTopic) {
-			  // Add pump status to timeline
-			  setTimelineData((prevData) => [
-				...prevData,
-				{
-				  time: new Date(data.timestamp).toLocaleTimeString(),
-				  title: `Pump ${data.payload}`,
-				  description: `Timestamp: ${new Date(data.timestamp).toLocaleString()}`,
-				  icon: data.payload === "on" ? "power" : "power-off",
-				},
-			  ]);
-			} else if (message.destinationName === heartbeatTopic) {
-			  // Update last heartbeat timestamp
-			  setLastHeartbeatTimestamp(Date.now());
+      const onMessageArrived = message => {
+        const data = JSON.parse(message.payloadString);
 
-			  // Mark device as online
-			  if (!isDeviceOnline) {
-				setIsDeviceOnline(true);
-				setTimelineData((prevData) => [
-				  ...prevData,
-				  {
-					time: new Date().toLocaleTimeString(),
-					title: "Device Online",
-					description: `Timestamp: ${new Date().toLocaleString()}`,
-					icon: "wifi",
-				  },
-				]);
-			  }
-			}
-		  };
-	  
-	  
+        if (message.destinationName === pumpStatusTopic) {
+          // Add pump status to timeline
+          setTimelineData(prevData => [
+            ...prevData,
+            {
+              time: new Date(data.timestamp).toLocaleTimeString(),
+              title: `Pump ${data.payload}`,
+              description: `Timestamp: ${new Date(data.timestamp).toLocaleString()}`,
+              icon: data.payload === 'on' ? 'power' : 'power-off',
+            },
+          ]);
+        } else if (message.destinationName === heartbeatTopic) {
+          // Update last heartbeat timestamp
+          setLastHeartbeatTimestamp(Date.now());
+
+          // Mark device as online
+          if (!isDeviceOnline) {
+            setIsDeviceOnline(true);
+            setTimelineData(prevData => [
+              ...prevData,
+              {
+                time: new Date().toLocaleTimeString(),
+                title: 'Device Online',
+                description: `Timestamp: ${new Date().toLocaleString()}`,
+                icon: 'wifi',
+              },
+            ]);
+          }
+        }
+      };
     }, 6000); // Check every second
-	
-	
-	
-	
 
     return () => clearInterval(interval);
   }, [lastHeartbeatTimestamp, isDeviceOnline]);
@@ -194,8 +187,8 @@ const TimelinePage = () => {
       <Timeline
         data={timelineData}
         circleSize={20}
-        circleColor={isDeviceOnline ? "green" : "red"}
-        lineColor="gray"
+        circleColor={isDeviceOnline ? 'green' : 'red'}
+        lineColor='gray'
         timeStyle={styles.time}
         titleStyle={styles.title}
         descriptionStyle={styles.description}
@@ -206,30 +199,30 @@ const TimelinePage = () => {
 
 const styles = StyleSheet.create({
   container: {
+    backgroundColor: '#fff',
     flex: 1,
-    backgroundColor: "#fff",
     padding: 20,
+  },
+  description: {
+    color: 'gray',
+    fontSize: 14,
   },
   header: {
     fontSize: 24,
-    fontWeight: "bold",
+    fontWeight: 'bold',
     marginBottom: 20,
-    textAlign: "center",
+    textAlign: 'center',
   },
   time: {
-    textAlign: "center",
-    backgroundColor: "#ff9797",
-    color: "white",
-    padding: 5,
+    backgroundColor: '#ff9797',
     borderRadius: 13,
+    color: 'white',
+    padding: 5,
+    textAlign: 'center',
   },
   title: {
     fontSize: 16,
-    fontWeight: "bold",
-  },
-  description: {
-    fontSize: 14,
-    color: "gray",
+    fontWeight: 'bold',
   },
 });
 

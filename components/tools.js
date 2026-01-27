@@ -4,13 +4,13 @@
  * @param {string} jsonString - JSON string with payload
  * @returns {Array} - The payload as an array, or empty array if parsing fails
  */
-export const parseArrayPayload = (jsonString) => {
+export const parseArrayPayload = jsonString => {
   try {
     // Try standard JSON parse first
     try {
       const parsed = JSON.parse(jsonString);
       if (!parsed) return [];
-      
+
       if (Array.isArray(parsed.payload)) {
         return parsed.payload;
       }
@@ -28,9 +28,10 @@ export const parseArrayPayload = (jsonString) => {
           return [];
         }
         // Split by "," and clean up quotes
-        const items = innerContent.split(/",\s*"/).map(item => 
-          item.replace(/^"|"$/g, '').trim()
-        ).filter(item => item.length > 0);
+        const items = innerContent
+          .split(/",\s*"/)
+          .map(item => item.replace(/^"|"$/g, '').trim())
+          .filter(item => item.length > 0);
         return items;
       }
     }
@@ -45,7 +46,7 @@ export const parseArrayPayload = (jsonString) => {
  * @param {string} jsonString - JSON string in format {"payload": string, "timestamp": string}
  * @returns {string} - The payload as a string, or empty string if parsing fails
  */
-export const parseStringPayload = (jsonString) => {
+export const parseStringPayload = jsonString => {
   try {
     const parsed = JSON.parse(jsonString);
     if (parsed && typeof parsed.payload === 'string') {
@@ -57,4 +58,3 @@ export const parseStringPayload = (jsonString) => {
     return '';
   }
 };
-

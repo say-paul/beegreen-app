@@ -17,10 +17,14 @@ import {
 import { MaterialIcons } from '@expo/vector-icons';
 import * as Network from 'expo-network';
 import { useAuth } from '../services/auth';
+import { useWifiCredentials } from '../services/wifi';
 
 const DevicePage = ({ navigation }) => {
   // Get config from auth context - no need for useEffect to load from SecureStore
   const { config: savedData2, updateConfig } = useAuth();
+  
+  // WiFi credentials service for password auto-fill
+  const { savePassword: saveWifiPassword, getPassword: getSavedWifiPassword } = useWifiCredentials();
 
   // MQTT Connection States
   const [device, setDevice] = useState('');
@@ -206,10 +210,82 @@ const DevicePage = ({ navigation }) => {
     }
   };
 
-  const handleWifiSelect = wifi => {
+  const handleWifiSelect = async wifi => {
     setSelectedWifi(wifi);
     setWifiSSID(wifi.ssid);
+    
+    // Always hide password when form opens (security best practice)
+    setShowWifiPassword(false);
+    
+    // Check for saved credentials and pre-populate password
+    const savedPassword = await getSavedWifiPassword(wifi.ssid);
+    if (savedPassword) {
+      setWifiPassword(savedPassword);
+    } else {
+      setWifiPassword(''); // Clear any previous password
+    }
+    
     setShowWifiForm(true);
+  };
+
+  // Rescan WiFi networks without closing modal
+  const rescanWifiNetworks = async () => {
+    try {
+      setIsScanning(true);
+
+      if (!(await checkDeviceConnection())) return;
+
+      let response = await deviceFetch('http://192.168.4.1/wifiscan');
+      let data = await response.text();
+
+      try {
+        data = JSON.parse(data);
+        setDevice(JSON.stringify(data, null, 2));
+      } catch (e) {
+        const endpoints = [
+          'http://192.168.4.1/scan',
+          'http://192.168.4.1/wifiscan',
+          'http://192.168.4.1/wifi-scan',
+        ];
+
+        for (const endpoint of endpoints) {
+          try {
+            response = await deviceFetch(endpoint);
+            data = await response.json();
+            break;
+          } catch (err) {
+            console.log(`Failed on ${endpoint}`, err);
+          }
+        }
+      }
+
+      if (typeof data === 'string') {
+        const networks = data
+          .split('\n')
+          .filter(line => line.includes('SSID:'))
+          .map(line => {
+            const ssid = line.replace('SSID:', '').trim();
+            return { ssid, rssi: -50 };
+          });
+
+        if (networks.length > 0) {
+          setWifiNetworks(networks);
+          return;
+        }
+        throw new Error('No networks found');
+      } else if (Array.isArray(data)) {
+        setWifiNetworks(data);
+      } else if (data.networks) {
+        setWifiNetworks(data.networks);
+      } else {
+        throw new Error('Unexpected response format');
+      }
+    } catch (error) {
+      console.error('WiFi Rescan Error:', error);
+      Alert.alert('Rescan Failed', error.message);
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   const saveWifiCredentials = async () => {
@@ -251,6 +327,9 @@ const DevicePage = ({ navigation }) => {
         wifiSSID,
         wifiPassword,
       });
+
+      // Save WiFi credentials for future auto-fill (secure storage)
+      await saveWifiPassword(wifiSSID, wifiPassword);
 
       Alert.alert('Success', `WiFi credentials saved for ${wifiSSID}`);
       setShowWifiForm(false);
@@ -311,7 +390,20 @@ const DevicePage = ({ navigation }) => {
       >
         <View style={styles.modalContainer}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Available WiFi Networks</Text>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Available WiFi Networks</Text>
+              <TouchableOpacity
+                style={styles.rescanButton}
+                onPress={rescanWifiNetworks}
+                disabled={isScanning}
+              >
+                {isScanning ? (
+                  <ActivityIndicator size='small' color='#4CAF50' />
+                ) : (
+                  <MaterialIcons name='refresh' size={24} color='#4CAF50' />
+                )}
+              </TouchableOpacity>
+            </View>
             <ScrollView style={styles.wifiList}>
               {wifiNetworks.length > 0 ? (
                 wifiNetworks.map((wifi, index) => (
@@ -465,12 +557,27 @@ const styles = StyleSheet.create({
     padding: 20,
     width: '80%',
   },
+  modalHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 15,
+  },
   modalTitle: {
     color: '#333',
+    flex: 1,
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 15,
     textAlign: 'center',
+  },
+  rescanButton: {
+    alignItems: 'center',
+    borderColor: '#4CAF50',
+    borderRadius: 20,
+    borderWidth: 1,
+    height: 36,
+    justifyContent: 'center',
+    width: 36,
   },
   noNetworksText: {
     color: '#777',

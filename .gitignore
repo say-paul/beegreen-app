@@ -81,3 +81,11 @@ yarn-error.*
 *.tsbuildinfo
 
 # @end expo-cli
+
+# Firebase Admin SDK key (NEVER commit this!)
+firebase-admin-key.json
+**/firebase-admin-key.json
+
+# Python cache
+__pycache__/
+*.pyc

@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "352499321303",
+    "firebase_url": "https://gardneing.firebaseio.com",
+    "project_id": "gardneing",
+    "storage_bucket": "gardneing.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:352499321303:android:804f3672403265762fe392",
+        "android_client_info": {
+          "package_name": "com.buildybee.beegreen"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyA_DKzRRzuDpU9R-lCsezjuhOR7qNMEWuw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

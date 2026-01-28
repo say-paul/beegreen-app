@@ -13,6 +13,7 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
+      "bundleIdentifier": "com.buildybee.beegreen",
       "config": {
         "usesNonExemptEncryption": false
       },
@@ -20,7 +21,8 @@
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         },
-        "NSLocationWhenInUseUsageDescription": "This app needs location permission to scan for WiFi networks"
+        "NSLocationWhenInUseUsageDescription": "This app needs location permission to scan for WiFi networks",
+        "UIBackgroundModes": ["remote-notification"]
       }
     },
     "android": {
@@ -29,6 +31,7 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.buildybee.beegreen",
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "android.permission.ACCESS_WIFI_STATE",
         "android.permission.CHANGE_WIFI_STATE",
@@ -42,11 +45,16 @@
     },
     "plugins": [
       "expo-secure-store",
+      "@react-native-firebase/app",
+      "@react-native-firebase/messaging",
       [
         "expo-build-properties",
         {
           "android": {
             "usesCleartextTraffic": true
+          },
+          "ios": {
+            "useFrameworks": "static"
           }
         }
       ],

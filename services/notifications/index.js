@@ -19,7 +19,7 @@ export { NotificationProvider } from './NotificationProvider';
 export { useNotifications } from './useNotifications';
 
 // Standalone service (for non-React usage)
-export { NotificationService } from './NotificationService';
+export { NotificationService, isFirebaseAvailable, isRunningInExpoGo } from './NotificationService';
 
 // Constants and types
 export { NOTIFICATION_TYPES, TOPICS, NOTIFICATION_MESSAGES } from './notificationTypes';

@@ -15,12 +15,13 @@ import {
   Platform,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
 import * as Network from 'expo-network';
 import Paho from 'paho-mqtt';
-import Constants from 'expo-constants';
+import { useAuth } from '../services/auth';
 
 const LoginPage = ({ navigation }) => {
+  // Get auth context for login functionality
+  const { login, updateConfig } = useAuth();
   // MQTT Connection States
   const [mqttUser, setMqttUser] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
@@ -153,7 +154,6 @@ const LoginPage = ({ navigation }) => {
       });
 
       console.log('Connected to MQTT broker');
-      setShowAddDevice(false);
 
       const config = {
         mqttServer,
@@ -164,12 +164,37 @@ const LoginPage = ({ navigation }) => {
         schedulerSet: false,
       };
 
-      await SecureStore.setItemAsync('config', JSON.stringify(config));
-      Alert.alert('Success', 'MQTT configuration saved successfully!');
-      Alert.alert('Close and Reopen BeeGreen app');
+      // Use AuthContext login - this will update the auth state
+      // and automatically trigger navigation to Device Add page
+      const success = await login(config);
+      
+      if (success) {
+        Alert.alert('Success', 'MQTT configuration saved successfully!');
+        // Navigation will happen automatically via AuthContext state change
+      } else {
+        Alert.alert('Error', 'Failed to save configuration. Please try again.');
+      }
     } catch (error) {
       console.error('Connection error:', error);
-      Alert.alert('Error', `Failed to connect to MQTT broker: ${error.message}`);
+      
+      // Provide user-friendly error messages
+      let errorMessage = 'Please check your credentials and try again.';
+      
+      if (error?.message) {
+        // Map known error messages to user-friendly versions
+        const lowerMessage = error.message.toLowerCase();
+        if (lowerMessage.includes('timeout') || lowerMessage.includes('timed out')) {
+          errorMessage = 'Connection timed out. Please check your server address and port.';
+        } else if (lowerMessage.includes('refused') || lowerMessage.includes('rejected')) {
+          errorMessage = 'Connection refused. Please verify your credentials are correct.';
+        } else if (lowerMessage.includes('network') || lowerMessage.includes('unreachable')) {
+          errorMessage = 'Network error. Please check your internet connection.';
+        } else if (lowerMessage.includes('unauthorized') || lowerMessage.includes('authentication')) {
+          errorMessage = 'Invalid username or password. Please check your credentials.';
+        }
+      }
+      
+      Alert.alert('Connection Failed', errorMessage);
     } finally {
       setIsConnecting(false);
     }
@@ -285,24 +310,21 @@ const LoginPage = ({ navigation }) => {
       const responseData = await response.text();
       console.log('WiFi save response:', responseData);
 
-      await SecureStore.setItemAsync(
-        'config',
-        JSON.stringify({
-          mqttServer,
-          mqttPort,
-          mqttUser,
-          mqttPassword,
-          deviceAdded: true,
-          wifiSSID,
-          wifiPassword,
-          schedulerSet: false,
-        })
-      );
+      // Update config with device added flag using auth context
+      const success = await updateConfig({
+        deviceAdded: true,
+        wifiSSID,
+        wifiPassword,
+      });
 
-      Alert.alert('Success', `WiFi credentials saved for ${wifiSSID}`);
-      setShowWifiForm(false);
-      setShowWifiModal(false);
-      setShowAddDevice(false);
+      if (success) {
+        Alert.alert('Success', `WiFi credentials saved for ${wifiSSID}`);
+        setShowWifiForm(false);
+        setShowWifiModal(false);
+        setShowAddDevice(false);
+      } else {
+        Alert.alert('Error', 'Failed to save configuration locally.');
+      }
     } catch (error) {
       console.error('Error saving WiFi credentials:', error);
       Alert.alert('Error', `Failed to save WiFi credentials: ${error.message}`);

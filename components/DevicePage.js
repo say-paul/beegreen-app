@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   StyleSheet,
@@ -15,19 +15,16 @@ import {
   Platform,
 } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import * as SecureStore from 'expo-secure-store';
 import * as Network from 'expo-network';
-import Paho from 'paho-mqtt';
-import Constants from 'expo-constants';
+import { useAuth } from '../services/auth';
 
 const DevicePage = ({ navigation }) => {
+  // Get config from auth context - no need for useEffect to load from SecureStore
+  const { config: savedData2, updateConfig } = useAuth();
+
   // MQTT Connection States
   const [device, setDevice] = useState('');
-  //  const [mqttUser, setMqttUser] = useState('');
   const [isConnecting, setIsConnecting] = useState(false);
-  //  const [mqttServer, setMqttServer] = useState('');
-  //  const [mqttPort, setMqttPort] = useState('8884');
-  //  const [mqttPassword, setMqttPassword] = useState('');
 
   // WiFi Configuration States
   const [showAddDevice, setShowAddDevice] = useState(true);
@@ -42,19 +39,6 @@ const DevicePage = ({ navigation }) => {
 
   const [showMqttPassword, setShowMqttPassword] = useState(false);
   const [showWifiPassword, setShowWifiPassword] = useState(false);
-  const [savedData2, setSavedData2] = useState(null);
-
-  useEffect(() => {
-    const fetchSavedData = async () => {
-      const config = await SecureStore.getItemAsync('config');
-      if (config) {
-        const parsedConfig = JSON.parse(config);
-        setSavedData2(parsedConfig);
-      }
-    };
-
-    fetchSavedData();
-  }, []);
 
   // Enhanced fetch with Android compatibility
   const deviceFetch = async (url, options = {}) => {
@@ -234,6 +218,12 @@ const DevicePage = ({ navigation }) => {
 
       if (!(await checkDeviceConnection())) return;
 
+      // Ensure we have the required config data
+      if (!savedData2?.mqttServer || !savedData2?.mqttUser || !savedData2?.mqttPassword) {
+        Alert.alert('Error', 'MQTT configuration not found. Please log in again.');
+        return;
+      }
+
       const formData = new URLSearchParams();
       formData.append('s', wifiSSID);
       formData.append('p', wifiPassword);
@@ -254,6 +244,14 @@ const DevicePage = ({ navigation }) => {
 
       const responseData = await response.text();
       console.log('WiFi save response:', responseData);
+
+      // Update config with device added flag using auth context
+      await updateConfig({
+        deviceAdded: true,
+        wifiSSID,
+        wifiPassword,
+      });
+
       Alert.alert('Success', `WiFi credentials saved for ${wifiSSID}`);
       setShowWifiForm(false);
       setShowWifiModal(false);
@@ -261,6 +259,7 @@ const DevicePage = ({ navigation }) => {
       console.log('device selected..........');
     } catch (error) {
       console.error('Error saving WiFi credentials:', error);
+      Alert.alert('Error', `Failed to save WiFi credentials: ${error.message}`);
     } finally {
       setIsSaving(false);
       console.log('device selected finally..........');

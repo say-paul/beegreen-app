@@ -3,10 +3,13 @@
  *
  * Wraps the app to provide notification state and automatically
  * handles initialization, permissions, and listeners.
+ * 
+ * When running in Expo Go, this provider uses mock services
+ * to allow testing other app features without Firebase.
  */
 import React, { createContext, useEffect, useState, useCallback } from 'react';
 import { Alert, Platform } from 'react-native';
-import { NotificationService } from './NotificationService';
+import { NotificationService, isFirebaseAvailable, isRunningInExpoGo } from './NotificationService';
 import { TOPICS } from './notificationTypes';
 
 export const NotificationContext = createContext(null);
@@ -111,9 +114,29 @@ export const NotificationProvider = ({ children }) => {
 
     // Cleanup listeners on unmount
     return () => {
-      if (unsubscribeMessage) unsubscribeMessage();
-      if (unsubscribeTokenRefresh) unsubscribeTokenRefresh();
-      if (unsubscribeNotificationOpened) unsubscribeNotificationOpened();
+      try {
+        if (unsubscribeMessage && typeof unsubscribeMessage === 'function') {
+          unsubscribeMessage();
+        }
+      } catch (error) {
+        console.warn('Error cleaning up message listener:', error);
+      }
+
+      try {
+        if (unsubscribeTokenRefresh && typeof unsubscribeTokenRefresh === 'function') {
+          unsubscribeTokenRefresh();
+        }
+      } catch (error) {
+        console.warn('Error cleaning up token refresh listener:', error);
+      }
+
+      try {
+        if (unsubscribeNotificationOpened && typeof unsubscribeNotificationOpened === 'function') {
+          unsubscribeNotificationOpened();
+        }
+      } catch (error) {
+        console.warn('Error cleaning up notification opened listener:', error);
+      }
     };
   }, [handleForegroundNotification, handleNotificationOpened]);
 
@@ -150,6 +173,9 @@ export const NotificationProvider = ({ children }) => {
     refreshToken,
     subscribeToTopic,
     unsubscribeFromTopic,
+    // Expo Go mode flags - useful for UI indicators
+    isFirebaseAvailable,
+    isRunningInExpoGo,
   };
 
   return <NotificationContext.Provider value={value}>{children}</NotificationContext.Provider>;

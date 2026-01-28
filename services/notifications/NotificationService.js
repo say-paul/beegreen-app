@@ -3,11 +3,91 @@
  *
  * This service handles all Firebase Cloud Messaging operations without
  * any React dependencies, making it testable and reusable.
+ * 
+ * When running in Expo Go (without native modules), this service
+ * provides mock implementations to allow testing other app features.
  */
-import messaging from '@react-native-firebase/messaging';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
-export const NotificationService = {
+// Check if we're running in Expo Go (without native modules)
+const isExpoGo = Constants.appOwnership === 'expo';
+
+// Dynamically import Firebase messaging only when available
+let messaging = null;
+let firebaseAvailable = false;
+
+if (!isExpoGo) {
+  try {
+    // Only import Firebase when not in Expo Go
+    messaging = require('@react-native-firebase/messaging').default;
+    firebaseAvailable = true;
+    console.log('Firebase messaging loaded successfully');
+  } catch (error) {
+    console.warn('Firebase messaging not available:', error.message);
+    firebaseAvailable = false;
+  }
+} else {
+  console.log('Running in Expo Go - Firebase messaging disabled (mock mode)');
+}
+
+/**
+ * Mock notification service for Expo Go testing
+ * Provides no-op implementations that won't crash the app
+ */
+const MockNotificationService = {
+  async requestPermission() {
+    console.log('[Mock] Notification permission requested');
+    return true;
+  },
+
+  async getToken() {
+    console.log('[Mock] FCM token requested');
+    return 'mock-fcm-token-expo-go-testing';
+  },
+
+  onTokenRefresh(callback) {
+    console.log('[Mock] Token refresh listener registered');
+    return () => {}; // Return unsubscribe function
+  },
+
+  onMessage(callback) {
+    console.log('[Mock] Message listener registered');
+    return () => {}; // Return unsubscribe function
+  },
+
+  setBackgroundMessageHandler(handler) {
+    console.log('[Mock] Background message handler set');
+  },
+
+  async subscribeToTopic(topic) {
+    console.log(`[Mock] Subscribed to topic: ${topic}`);
+  },
+
+  async unsubscribeFromTopic(topic) {
+    console.log(`[Mock] Unsubscribed from topic: ${topic}`);
+  },
+
+  async hasPermission() {
+    console.log('[Mock] Permission check');
+    return true;
+  },
+
+  async getInitialNotification() {
+    console.log('[Mock] Initial notification check');
+    return null;
+  },
+
+  onNotificationOpenedApp(callback) {
+    console.log('[Mock] Notification opened listener registered');
+    return () => {}; // Return unsubscribe function
+  },
+};
+
+/**
+ * Real Firebase notification service
+ */
+const FirebaseNotificationService = {
   /**
    * Request notification permission from the user
    * @returns {Promise<boolean>} Whether permission was granted
@@ -154,3 +234,12 @@ export const NotificationService = {
     });
   },
 };
+
+// Export the appropriate service based on Firebase availability
+export const NotificationService = firebaseAvailable 
+  ? FirebaseNotificationService 
+  : MockNotificationService;
+
+// Export flag to check if Firebase is available (useful for UI indicators)
+export const isFirebaseAvailable = firebaseAvailable;
+export const isRunningInExpoGo = isExpoGo;

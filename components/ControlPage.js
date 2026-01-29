@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -11,9 +11,21 @@ import {
 } from 'react-native';
 import Slider from '@react-native-community/slider';
 import { MaterialIcons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import Paho from 'paho-mqtt';
 import * as SecureStore from 'expo-secure-store';
 import * as Notifications from 'expo-notifications';
+import DeviceSelector from './DeviceSelector';
+import { useDevices } from '../services/devices';
+import { 
+  subscribeToDevice, 
+  unsubscribeFromDevice, 
+  parseDeviceIdFromTopic, 
+  parseDeviceStatus as parseStatusPayload,
+  CONTROLLER_TOPICS,
+  buildTopic,
+} from '../services/mqtt';
+import { parseStringPayload } from './tools';
 
 // Configure notifications handler
 Notifications.setNotificationHandler({
@@ -25,30 +37,51 @@ Notifications.setNotificationHandler({
 });
 
 const ControlPage = ({ navigation }) => {
-  const [deviceAdded, setDeviceAdded] = useState(false);
+  // Device storage hook
+  const { 
+    devices: storedDevices, 
+    loading: devicesLoading,
+    refreshDevices,
+  } = useDevices();
+
   const [isRunning, setIsRunning] = useState(false);
   const [pumpStatus, setPumpStatus] = useState('off');
   const [duration, setDuration] = useState(5);
-  const [isOnline, setIsOnline] = useState(false);
   const [client, setClient] = useState(null);
   const [notificationPermission, setNotificationPermission] = useState(false);
-  const [devices, setDevices] = useState([]); // Store all discovered devices
-  const [currentDevice, setCurrentDevice] = useState(''); // Currently selected device
-  const [availableDevices, setAvailableDevices] = useState([]); // List of available devices for UI
-
-  const pumpTriggerTopic = '${currentDevice}/pump_trigger';
-  const pumpStatusTopic = '${currentDevice}/pump_status';
-  const heartbeatTopicPattern = '+/heartbeat'; // MQTT wildcard pattern for device heartbeat
-  const devicePumpStatusPattern = '+/pump_status'; // MQTT wildcard pattern for device pump status
+  const [currentDevice, setCurrentDevice] = useState(null); // Now stores device object
+  const [deviceStatus, setDeviceStatus] = useState({}); // Per-device online/offline status
+  const [mqttConnected, setMqttConnected] = useState(false);
 
   const timerRef = useRef(null);
-  const lastMessageTimeRef = useRef(null);
-  const connectionCheckIntervalRef = useRef(null);
   const lastPumpStatusRef = useRef('off');
   const notificationListener = useRef();
   const responseListener = useRef();
-  const devicesRef = useRef(new Set()); // Using ref to track devices without triggering re-renders
-  const deviceHeartbeatTimes = useRef({}); // Track last heartbeat time for each device
+  const deviceStatusRef = useRef({});
+  const subscribedDevicesRef = useRef(new Set());
+
+  // Refresh devices when page is focused (to get updated names, etc.)
+  useFocusEffect(
+    useCallback(() => {
+      refreshDevices();
+    }, [refreshDevices])
+  );
+
+  // Check if current device is available for actions
+  const isDeviceAvailable = useCallback(() => {
+    if (!currentDevice) return false;
+    if (!currentDevice.active) return false;
+    const status = deviceStatus[currentDevice.id];
+    return status === 'online';
+  }, [currentDevice, deviceStatus]);
+
+  // Update device status
+  const updateDeviceStatus = useCallback((deviceId, isOnline) => {
+    const statusStr = isOnline ? 'online' : 'offline';
+    deviceStatusRef.current = { ...deviceStatusRef.current, [deviceId]: statusStr };
+    setDeviceStatus(prev => ({ ...prev, [deviceId]: statusStr }));
+    console.log(`ControlPage: Device ${deviceId} status: ${statusStr}`);
+  }, []);
 
   // Register for push notifications
   useEffect(() => {
@@ -56,18 +89,15 @@ const ControlPage = ({ navigation }) => {
       console.log('Push notifications ready');
     });
 
-    // This listener is fired whenever a notification is received while the app is foregrounded
     notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
       console.log('Notification received:', notification);
     });
 
-    // This listener is fired whenever a user taps on or interacts with a notification
     responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
       console.log('Notification interaction:', response);
     });
 
     return () => {
-      // Use .remove() method on subscription objects (newer expo-notifications API)
       if (notificationListener.current) {
         notificationListener.current.remove();
       }
@@ -128,7 +158,7 @@ const ControlPage = ({ navigation }) => {
           priority: 'high',
           autoDismiss: true,
         },
-        trigger: null, // Send immediately
+        trigger: null,
       });
       console.log(`Push notification sent: ${title} - ${body}`);
     } catch (error) {
@@ -156,60 +186,56 @@ const ControlPage = ({ navigation }) => {
     }
   };
 
-  // Extract device name from topic
-  const extractDeviceName = topic => {
-    // Topic format: [DEVICENAME]/heartbeat or [DEVICENAME]/pump_status
-    const parts = topic.split('/');
-    return parts.length > 0 ? parts[0] : null;
-  };
+  // Subscribe to topics for active devices
+  const subscribeToActiveDevices = useCallback((mqttClient) => {
+    if (!mqttClient || !mqttClient.isConnected()) return;
 
-  // Add a new device to the list
-  const addNewDevice = deviceName => {
-    if (!devicesRef.current.has(deviceName)) {
-      devicesRef.current.add(deviceName);
-
-      // Update state for UI
-      setDevices(prev => {
-        const updated = [...prev, deviceName];
-        setAvailableDevices(updated);
-        return updated;
-      });
-
-      // If this is the first device, set it as current
-      if (devicesRef.current.size === 1) {
-        setCurrentDevice(deviceName);
-      }
-
-      console.log(`New device discovered: ${deviceName}`);
-
-      // Send notification for new device
-      sendPushNotification('🔍 New Device Found', `BeeGreen device "${deviceName}" is now online`);
-    }
-
-    // Update heartbeat time
-    deviceHeartbeatTimes.current[deviceName] = Date.now();
-  };
-
-  // Check for offline devices
-  const checkDeviceHeartbeats = () => {
-    const now = Date.now();
-    const offlineThreshold = 1200000; // 20 minutes
-
-    Object.keys(deviceHeartbeatTimes.current).forEach(deviceName => {
-      const lastHeartbeat = deviceHeartbeatTimes.current[deviceName];
-      if (now - lastHeartbeat > offlineThreshold) {
-        console.log(`Device ${deviceName} is offline`);
-        // You could add logic here to mark device as offline in UI
+    const activeDevices = storedDevices.filter(d => d.active);
+    
+    activeDevices.forEach(device => {
+      if (!subscribedDevicesRef.current.has(device.id)) {
+        subscribeToDevice(mqttClient, device.id, CONTROLLER_TOPICS);
+        subscribedDevicesRef.current.add(device.id);
+        // Initialize status as offline until we receive status message
+        updateDeviceStatus(device.id, false);
       }
     });
-  };
+  }, [storedDevices, updateDeviceStatus]);
 
+  // Handle MQTT message
+  const handleMqttMessage = useCallback((message) => {
+    const topic = message.destinationName;
+    const deviceId = parseDeviceIdFromTopic(topic);
+
+    // Handle device status messages
+    if (topic.endsWith('/status')) {
+      if (deviceId) {
+        const isOnline = parseStatusPayload(message);
+        updateDeviceStatus(deviceId, isOnline);
+      }
+    }
+    // Handle pump status messages
+    else if (topic.endsWith('/pump_status')) {
+      const status = parseStringPayload(message.payloadString).toLowerCase();
+      
+      if (status && deviceId && currentDevice && deviceId === currentDevice.id) {
+        handlePumpStatusChange(status, currentDevice.name);
+        setPumpStatus(status);
+        setIsRunning(status === 'on');
+
+        if (status === 'off' && timerRef.current) {
+          clearTimeout(timerRef.current);
+        }
+      }
+    }
+  }, [currentDevice, updateDeviceStatus]);
+
+  // Initialize MQTT connection
   useEffect(() => {
-    const fetchSavedData = async () => {
+    const initializeMqtt = async () => {
       const config = await SecureStore.getItemAsync('config');
       if (config) {
         const parsedConfig = JSON.parse(config);
-        setDeviceAdded(parsedConfig.deviceAdded || false);
 
         if (parsedConfig.mqttServer) {
           const mqttClient = new Paho.Client(
@@ -218,106 +244,41 @@ const ControlPage = ({ navigation }) => {
             'clientId-' + Math.random().toString(16).substr(2, 8)
           );
 
-          mqttClient.onMessageArrived = message => {
-            const topic = message.destinationName;
-            const deviceName = extractDeviceName(topic);
+          mqttClient.onMessageArrived = handleMqttMessage;
 
-            // Handle heartbeat messages
-            if (topic.endsWith('/heartbeat')) {
-              if (deviceName) {
-                addNewDevice(deviceName);
-                setIsOnline(true);
-                lastMessageTimeRef.current = Date.now();
-
-                // Notify on reconnection for this specific device
-                if (!isOnline) {
-                  sendPushNotification(
-                    '🔗 Reconnected',
-                    `Connection to BeeGreen device "${deviceName}" restored`
-                  );
-                }
-              }
-            }
-            // Handle pump status messages
-            else if (topic.endsWith('/pump_status')) {
-              try {
-                const payload = JSON.parse(message.payloadString);
-                const status = payload.payload.toLowerCase();
-
-                // Handle pump status change for this device
-                handlePumpStatusChange(status, deviceName);
-
-                setPumpStatus(status);
-                setIsRunning(status === 'on');
-                setDeviceAdded(true);
-                setIsOnline(true);
-                lastMessageTimeRef.current = Date.now();
-
-                if (status === 'off' && timerRef.current) {
-                  clearTimeout(timerRef.current);
-                }
-              } catch (error) {
-                console.error('Error parsing message:', error);
-              }
-            }
-            // Backward compatibility with old topics
-            else if (topic === pumpStatusTopic) {
-              try {
-                const payload = JSON.parse(message.payloadString);
-                const status = payload.payload.toLowerCase();
-
-                // Handle pump status change
-                handlePumpStatusChange(status);
-
-                setPumpStatus(status);
-                setIsRunning(status === 'on');
-                setDeviceAdded(true);
-                setIsOnline(true);
-                lastMessageTimeRef.current = Date.now();
-
-                if (status === 'off' && timerRef.current) {
-                  clearTimeout(timerRef.current);
-                }
-              } catch (error) {
-                console.error('Error parsing message:', error);
-              }
+          mqttClient.onConnectionLost = responseObject => {
+            if (responseObject.errorCode !== 0) {
+              console.log('Connection lost:', responseObject.errorMessage);
+              setMqttConnected(false);
+              // Mark all devices as offline
+              Object.keys(deviceStatusRef.current).forEach(deviceId => {
+                updateDeviceStatus(deviceId, false);
+              });
+              sendPushNotification('🔌 Connection Lost', 'Lost connection to MQTT broker');
             }
           };
 
           mqttClient.connect({
             onSuccess: () => {
-              // Subscribe to wildcard topics for multi-device support
-              mqttClient.subscribe(heartbeatTopicPattern);
-              mqttClient.subscribe(devicePumpStatusPattern);
-
-              // Also subscribe to old topics for backward compatibility
-              mqttClient.subscribe(pumpStatusTopic);
-
-              setIsOnline(true);
-
-              // Send connection notification
-              sendPushNotification('🔗 Connected', 'Successfully connected to MQTT broker');
-
-              // Start checking for message freshness
-              connectionCheckIntervalRef.current = setInterval(() => {
-                if (
-                  lastMessageTimeRef.current &&
-                  Date.now() - lastMessageTimeRef.current > 1200000
-                ) {
-                  setIsOnline(false);
-                  sendPushNotification(
-                    '⚠️ Connection Issue',
-                    'No messages received for 20 minutes'
-                  );
+              setMqttConnected(true);
+              console.log('ControlPage: MQTT connected');
+              
+              // Subscribe to active devices
+              subscribeToActiveDevices(mqttClient);
+              
+              // Set first active device as current
+              if (storedDevices.length > 0) {
+                const activeDevices = storedDevices.filter(d => d.active);
+                if (activeDevices.length > 0) {
+                  setCurrentDevice(activeDevices[0]);
                 }
+              }
 
-                // Check device heartbeats
-                checkDeviceHeartbeats();
-              }, 5000);
+              sendPushNotification('🔗 Connected', 'Successfully connected to MQTT broker');
             },
             onFailure: err => {
               console.error('Connection failed', err);
-              setIsOnline(false);
+              setMqttConnected(false);
               sendPushNotification('❌ Connection Failed', 'Unable to connect to MQTT broker');
             },
             useSSL: true,
@@ -325,69 +286,58 @@ const ControlPage = ({ navigation }) => {
             password: parsedConfig.mqttPassword,
           });
 
-          mqttClient.onConnectionLost = responseObject => {
-            if (responseObject.errorCode !== 0) {
-              console.log('Connection lost:', responseObject.errorMessage);
-              setIsOnline(false);
-              sendPushNotification('🔌 Connection Lost', 'Lost connection to MQTT broker');
-            }
-          };
-
           setClient(mqttClient);
         }
       }
     };
 
-    fetchSavedData();
+    // Wait for devices to load before initializing MQTT
+    if (!devicesLoading && storedDevices.length > 0) {
+      initializeMqtt();
+    }
 
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      if (connectionCheckIntervalRef.current) {
-        clearInterval(connectionCheckIntervalRef.current);
-      }
     };
-  }, [duration]);
+  }, [devicesLoading, storedDevices.length]);
+
+  // Re-subscribe when devices change
+  useEffect(() => {
+    if (client && mqttConnected) {
+      subscribeToActiveDevices(client);
+    }
+  }, [client, mqttConnected, subscribeToActiveDevices]);
 
   const handlePumpControl = start => {
-    if (client && client.isConnected()) {
-      setIsOnline(true);
+    if (!client || !client.isConnected() || !isDeviceAvailable()) {
+      sendPushNotification('❌ Command Failed', 'Device not available');
+      return;
+    }
 
-      // Determine which topic to use based on current device
-      let targetTopic;
-      if (currentDevice) {
-        targetTopic = `${currentDevice}/pump_trigger`;
-      } else {
-        targetTopic = pumpTriggerTopic; // Fallback to old topic
-      }
+    const targetTopic = buildTopic(currentDevice.id, 'pump_trigger');
 
-      const message = new Paho.Message(start ? duration.toString() : '0');
-      message.destinationName = targetTopic;
-      message.qos = 1;
-      client.send(message);
-      lastMessageTimeRef.current = Date.now();
+    const message = new Paho.Message(start ? duration.toString() : '0');
+    message.destinationName = targetTopic;
+    message.qos = 1;
+    client.send(message);
 
-      // Send immediate feedback for user action
-      const deviceInfo = currentDevice ? ` for device "${currentDevice}"` : '';
-      if (start) {
-        sendPushNotification(
-          '⏱️ Pump Starting',
-          `Sending start command${deviceInfo} for ${duration} seconds...`
-        );
+    const deviceInfo = ` for device "${currentDevice.name}"`;
+    if (start) {
+      sendPushNotification(
+        '⏱️ Pump Starting',
+        `Sending start command${deviceInfo} for ${duration} seconds...`
+      );
 
-        // Set timeout as fallback
-        timerRef.current = setTimeout(() => {
-          setIsRunning(false);
-          setPumpStatus('off');
-          handlePumpStatusChange('off');
-        }, duration * 1000);
-      } else {
-        sendPushNotification('🛑 Stopping Pump', `Sending stop command${deviceInfo}...`);
-        if (timerRef.current) {
-          clearTimeout(timerRef.current);
-        }
-      }
+      timerRef.current = setTimeout(() => {
+        setIsRunning(false);
+        setPumpStatus('off');
+        handlePumpStatusChange('off', currentDevice.name);
+      }, duration * 1000);
     } else {
-      sendPushNotification('❌ Command Failed', 'Unable to send command - device offline');
+      sendPushNotification('🛑 Stopping Pump', `Sending stop command${deviceInfo}...`);
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
     }
   };
 
@@ -398,8 +348,9 @@ const ControlPage = ({ navigation }) => {
     );
   };
 
-  const switchDevice = deviceName => {
-    setCurrentDevice(deviceName);
+  const switchDevice = (device) => {
+    // DeviceSelector only calls this for selectable devices
+    setCurrentDevice(device);
     // Reset pump status when switching devices
     setPumpStatus('off');
     setIsRunning(false);
@@ -407,8 +358,11 @@ const ControlPage = ({ navigation }) => {
       clearTimeout(timerRef.current);
     }
 
-    sendPushNotification('🔄 Device Switched', `Now controlling device: ${deviceName}`);
+    sendPushNotification('🔄 Device Switched', `Now controlling device: ${device.name}`);
   };
+
+  const deviceAvailable = isDeviceAvailable();
+  const hasAnyOnlineDevice = storedDevices.some(d => d.active && deviceStatus[d.id] === 'online');
 
   return (
     <SafeAreaView style={styles.container}>
@@ -418,58 +372,25 @@ const ControlPage = ({ navigation }) => {
         <View style={styles.header}>
           <Text style={styles.headerTitle}>BeeGreen Controller</Text>
           <View
-            style={[styles.statusIndicator, { backgroundColor: isOnline ? '#4CAF50' : '#F44336' }]}
+            style={[styles.statusIndicator, { backgroundColor: mqttConnected ? '#4CAF50' : '#F44336' }]}
           >
-            <Text style={styles.statusText}>{isOnline ? 'ONLINE' : 'OFFLINE'}</Text>
+            <Text style={styles.statusText}>{mqttConnected ? 'CONNECTED' : 'DISCONNECTED'}</Text>
           </View>
         </View>
 
-        {/* Device Selection Card */}
-        {availableDevices.length > 0 && (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <MaterialIcons name='devices' size={24} color='#5E72E4' />
-              <Text style={styles.cardTitle}>Available Devices</Text>
-              <Text style={styles.deviceCount}>{availableDevices.length} device(s)</Text>
-            </View>
-
-            <Text style={styles.deviceLabel}>Current Device:</Text>
-            <Text style={styles.currentDevice}>{currentDevice || 'None selected'}</Text>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.deviceList}>
-              {availableDevices.map((device, index) => (
-                <TouchableOpacity
-                  key={index}
-                  style={[
-                    styles.deviceButton,
-                    currentDevice === device && styles.deviceButtonActive,
-                  ]}
-                  onPress={() => switchDevice(device)}
-                >
-                  <MaterialIcons
-                    name='device-hub'
-                    size={20}
-                    color={currentDevice === device ? 'white' : '#5E72E4'}
-                  />
-                  <Text
-                    style={[
-                      styles.deviceButtonText,
-                      currentDevice === device && styles.deviceButtonTextActive,
-                    ]}
-                  >
-                    {device}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        )}
+        {/* Device Selection */}
+        <DeviceSelector
+          devices={storedDevices}
+          currentDevice={currentDevice}
+          deviceStatus={deviceStatus}
+          onSelectDevice={switchDevice}
+        />
 
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <MaterialIcons name='opacity' size={24} color='#5E72E4' />
             <Text style={styles.cardTitle}>
-              Pump Controller {currentDevice ? `(${currentDevice})` : ''}
+              Pump Controller {currentDevice ? `(${currentDevice.name})` : ''}
             </Text>
             <TouchableOpacity style={styles.testNotificationButton} onPress={testNotification}>
               <MaterialIcons name='notifications' size={20} color='#5E72E4' />
@@ -501,34 +422,53 @@ const ControlPage = ({ navigation }) => {
                 minimumTrackTintColor='#5E72E4'
                 maximumTrackTintColor='#E2E8F0'
                 thumbTintColor='#5E72E4'
+                disabled={!deviceAvailable}
               />
               <TouchableOpacity
-                style={[styles.controlButton, { backgroundColor: '#4CAF50' }]}
+                style={[
+                  styles.controlButton, 
+                  { backgroundColor: deviceAvailable ? '#4CAF50' : '#CBD5E0' }
+                ]}
                 onPress={() => handlePumpControl(true)}
-                disabled={!currentDevice && availableDevices.length > 0}
+                disabled={!deviceAvailable}
               >
                 <Text style={styles.controlButtonText}>
-                  {!currentDevice && availableDevices.length > 0
-                    ? 'SELECT A DEVICE FIRST'
-                    : 'START PUMP'}
+                  {devicesLoading 
+                    ? 'LOADING...'
+                    : storedDevices.length === 0 
+                      ? 'NO DEVICES ADDED' 
+                      : !currentDevice 
+                        ? 'SELECT A DEVICE' 
+                        : !deviceAvailable 
+                          ? 'DEVICE UNAVAILABLE'
+                          : 'START PUMP'}
                 </Text>
               </TouchableOpacity>
             </>
           ) : (
             <TouchableOpacity
-              style={[styles.controlButton, { backgroundColor: '#F44336' }]}
+              style={[styles.controlButton, { backgroundColor: deviceAvailable ? '#F44336' : '#CBD5E0' }]}
               onPress={() => handlePumpControl(false)}
+              disabled={!deviceAvailable}
             >
               <Text style={styles.controlButtonText}>STOP PUMP</Text>
             </TouchableOpacity>
           )}
 
-          {availableDevices.length === 0 && (
+          {storedDevices.length === 0 && !devicesLoading && (
             <View style={styles.infoBox}>
               <MaterialIcons name='info' size={20} color='#5E72E4' />
               <Text style={styles.infoText}>
-                Waiting for devices to connect... Devices will appear automatically when they send
-                heartbeat messages.
+                No devices added yet. Go to the Device page to add your BeeGreen device.
+              </Text>
+            </View>
+          )}
+
+          {storedDevices.length > 0 && !hasAnyOnlineDevice && !devicesLoading && (
+            <View style={styles.infoBox}>
+              <MaterialIcons name='cloud-off' size={20} color='#F44336' />
+              <Text style={styles.infoText}>
+                All devices are offline. Please check device connectivity.
               </Text>
             </View>
           )}
@@ -590,49 +530,6 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: '700',
-  },
-  currentDevice: {
-    color: '#5E72E4',
-    fontSize: 16,
-    fontWeight: '700',
-    marginBottom: 15,
-  },
-  deviceButton: {
-    alignItems: 'center',
-    backgroundColor: '#F7FAFC',
-    borderColor: '#E2E8F0',
-    borderRadius: 12,
-    borderWidth: 1,
-    flexDirection: 'row',
-    marginRight: 10,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-  },
-  deviceButtonActive: {
-    backgroundColor: '#5E72E4',
-    borderColor: '#5E72E4',
-  },
-  deviceButtonText: {
-    color: '#5E72E4',
-    fontSize: 14,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  deviceButtonTextActive: {
-    color: 'white',
-  },
-  deviceCount: {
-    color: '#718096',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  deviceLabel: {
-    color: '#718096',
-    fontSize: 14,
-    marginBottom: 5,
-  },
-  deviceList: {
-    marginBottom: 5,
   },
   durationLabel: {
     color: '#4A5568',

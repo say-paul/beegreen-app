@@ -1,0 +1,3 @@
+# Backend notification service dependencies
+firebase-admin>=6.0.0
+paho-mqtt>=1.6.0
